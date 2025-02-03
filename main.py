@@ -1,13 +1,21 @@
 import tkinter as tk
 from tkinter import ttk
-import requests, csv
+import requests, csv, logging, os, time
 from typing import List, Dict
 from tkinter import messagebox
+import tela
 
-def scan_cve(cves_lista):
-    for cve_id in cves_lista:
+logging.basicConfig(level=logging.DEBUG)
+
+def scan_cve(cves_lista: List[str], filename: str = 'vulnerabilities.csv'):
+    result_list = []
+    for index, cve_id in enumerate(cves_lista):
         URL_API = f"https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={cve_id}"
         # Realize a requisição GET, proxies poderá ser desabilitado no futuro
+
+        # time sleep para respeitar o limite da API
+        if index > 0 and len(cves_lista) > 5:
+            time.sleep(5)
         try:
             response = requests.get(URL_API)
             if response.status_code == 200:
@@ -16,10 +24,8 @@ def scan_cve(cves_lista):
                 vulnerabilities = cve_data.get('vulnerabilities', [])
 
                 if not vulnerabilities:
-                    print(f"Nenhuma vulnerabilidade encontrada para o CVE: {cve_id}")
+                    logging.warning(f"Nenhuma vulnerabilidade encontrada para o CVE: {cve_id}")
                     continue
-                result_list = []
-                # print(f"{cve_data}\n\n")
                 for vulnerability in vulnerabilities:
                     cve_info = vulnerability.get('cve', {})
 
@@ -56,25 +62,52 @@ def scan_cve(cves_lista):
                         'source_identifier': source_identifier,
                         'cwes': cwes,
                     })
-                    print(result_list)
-                    write_csv(result_list, 'vulnerabilities.csv')
             else:
-                print(f"Erro ao acessar a API: {response.status_code}, {response.text}")
+                logging.error(f"Erro ao acessar a API: {response.status_code}, {response.text}")
         except Exception as e:
-            print(f"Erro ao realizar a requisição: {e}")
+            logging.error(f"Erro ao realizar a requisição: {e}")
+    if result_list:
+        write_csv(result_list, filename)
 
 def write_csv(data: List[Dict], filename: str):
+
+    file_exists = os.path.exists(filename)
     # Escreve os dados em um arquivo CSV.
-    with open(filename, mode='w', newline='', encoding='utf-8') as csvfile:
+    with open(filename, mode='a', newline='', encoding='utf-8') as csvfile:
         fieldnames = ['cve_id', 'published_date', 'last_modified_date', 'description', 
                       'severity', 'base_score', 'source_identifier', 'cwes']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
+        if not file_exists:
+            writer.writeheader()
         for row in data:
             row['cwes'] = ", ".join(row['cwes'])
             writer.writerow(row)
-    messagebox.showinfo("SUCESSO")
+    messagebox.showinfo("Sucesso", f"O arquivo {filename} foi criado e está disponível")
+
+def submit(quantidade_valor, cve_valor, filename):
+    if quantidade_valor == 'unica':
+        # Captura apenas a primeira caso tenha mais
+        cve_final = [cve_valor.strip().split()[0]]
+
+        if tela.validar_cve(cve_final):
+            logging.debug(f'CVE válida inserida: {cve_final}')
+            scan_cve(cve_final)
+        else:
+            messagebox.showwarning("Entrada inválida", "Por favor, insira uma CVE válida.\nExemplo: CVE-2021-5678")
+    elif quantidade_valor == 'multipla':
+        if not filename:
+            messagebox.showerror("Arquivo não selecionado", "Por favor, selecione um arquivo para processar.") 
+            return
+        try:
+            linhas = tela.read_file(filename)
+            cves_validas = tela.validar_cve(linhas)
+            if cves_validas:
+                logging.debug(f"CVEs válidas no arquivo: {cves_validas}")
+                scan_cve(cves_validas)
+            else:
+                messagebox.showwarning("Nenhuma CVE válida", "O arquivo não contém CVEs válidas.")
+        except Exception as e:
+            messagebox.showerror("Erro ao ler arquivo", f"Ocorreu um erro ao processar o arquivo: {e}")
 
 if __name__ == "__main__":
-    cves_lista = ["CVE-2021-5678"]
-    scan_cve(cves_lista)
+    tela.inicia_tela()
